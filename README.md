@@ -6,12 +6,15 @@ The plugin talks directly to the TI **LM3630A** dual-string LED driver through r
 
 ## Features
 
-- **Menu control** — a dedicated `Bigme Light` entry with a light dialog, step-size setting, all-off, and the EinkCenter panel.
-- **Gesture support** — assign swipes/taps to increase or decrease the **cold** or **warm** channel, toggle the light, or open the dialog.
-- **Self-contained setup** — the helper script is embedded in the plugin and installed through Magisk with one tap. No external files to place.
+- **Zero-latency direct sysfs I/O** — sets permissions on startup so swipe gestures write directly (<1ms) without spawning subshells or causing UI lag (with seamless root fallback).
+- **Power management** — turns off front lights during device sleep/standby to prevent battery drain, and restores them on resume.
+- **Quick presets & touch dialog** — instant touch presets (Daytime, Reading, Bedtime, Off) and fine-tuning steppers without requiring slow virtual keyboards.
+- **Menu control** — dedicated `Bigme Light` menu with presets, step size, sleep power management toggle, and EinkCenter panel.
+- **Gesture support** — assign swipes/taps to cold/warm up & down, presets, light toggle, or dialog.
+- **Self-contained setup** — helper script is embedded in the plugin and auto-installed through Magisk. No external files to place manually.
 - **Cold + warm channels** — independently control both LED strings from 0 to 255.
 - **Toggle with memory** — turning the light off remembers the last cold/warm values and restores them when turned back on.
-- **Health checks** — `Check setup` reports root, driver, and helper status with clear messages instead of failing silently.
+- **Health checks** — `Check setup` reports root, driver, direct I/O, and helper status.
 
 ## Requirements
 
@@ -26,7 +29,7 @@ The plugin talks directly to the TI **LM3630A** dual-string LED driver through r
 
 The plugin is a folder. You can install it entirely on the device — no computer needed.
 
-1. Download `bigmelight-v1.0.zip` from the [Releases](https://github.com/right9code/bigmelight.koplugin/releases) page (open the link in the device browser, or use KOReader's file browser / cloud storage).
+1. Download `bigmelight-v1.1.0.zip` from the [Releases](https://github.com/right9code/bigmelight.koplugin/releases) page (open the link in the device browser, or use KOReader's file browser / cloud storage).
 2. Unzip it so the folder lands here:
    ```
    /sdcard/koreader/plugins/bigmelight.koplugin/
@@ -43,11 +46,7 @@ adb push bigmelight.koplugin /sdcard/koreader/plugins/
 
 1. Open KOReader, then open the menu and go to **Bigme Light**.
 2. The plugin performs a health check. Because it needs root, **Magisk will prompt to grant superuser** — tap **Allow**.
-3. The helper is installed automatically:
-   ```
-   su -c 'base64 -d ... > /data/local/tmp/bigme_light.sh && chmod 755 ...'
-   ```
-4. It then reads the current light values and reports `Bigme Light: ready`.
+3. The helper is installed automatically, sysfs nodes are configured for direct I/O, and status reports `Bigme Light: ready`.
 
 The Magisk prompt appears **once**. After that the plugin works silently. No terminal and no PC are involved.
 
@@ -61,13 +60,15 @@ Open **Bigme Light** in the KOReader menu:
 
 | Entry | Description |
 |---|---|
-| **Light control dialog** | Set the cold value and nudge warm up/down |
+| **Light control dialog** | Interactive touch dialog with steppers, presets, and off |
+| **Quick presets** | Instant presets: Daytime, Reading, Bedtime, All off |
 | **Step size: N** | How much each gesture changes the light (1–50) |
+| **Turn off on sleep** | Power saving toggle: turns off LEDs on sleep, restores on wake |
 | **All off** | Turn both channels off |
 | **EinkCenter panel** | Open the Bigme EinkCenter panel |
-| **Install / update helper** | Reinstall the root helper and re-check status |
-| **Check setup** | Report root, driver, and helper status |
-| **Status: cold=… warm=…** | Current values (read-only) |
+| **Install / update helper** | Reinstall root helper and refresh permissions |
+| **Check setup** | Report root, driver, direct sysfs I/O, and helper status |
+| **Status: C=… W=… (Direct/Root)** | Current values and active driver mode |
 | **Refresh from hardware** | Re-read current values from the driver |
 
 ### Gestures
@@ -76,6 +77,9 @@ Assign in KOReader → **Settings → Tap and gestures → Gesture manager**, th
 
 - `Bigme: increase cold light` / `Bigme: decrease cold light`
 - `Bigme: increase warm light` / `Bigme: decrease warm light`
+- `Bigme: preset Daytime (cold 80, warm 0)`
+- `Bigme: preset Reading (cold 50, warm 60)`
+- `Bigme: preset Bedtime (cold 0, warm 50)`
 - `Bigme: toggle front light`
 - `Bigme: light control dialog`
 - `Bigme: turn off all lights`
@@ -103,5 +107,5 @@ bigmelight.koplugin/
 ---
 
 **Author**: right9code  
-**Version**: 1.0  
+**Version**: 1.1.0  
 **License**: [Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/)

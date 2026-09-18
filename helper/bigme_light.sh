@@ -15,7 +15,10 @@ case "$1" in
   read_warm)  cat "$DEV/lm3630a_warm_light" ;;
   set_cold)   echo "$2" > "$DEV/lm3630a_cold_light" ;;
   set_warm)   echo "$2" > "$DEV/lm3630a_warm_light" ;;
+  set_both)   echo "$2" > "$DEV/lm3630a_cold_light"
+              echo "$3" > "$DEV/lm3630a_warm_light" ;;
   off)        echo 0 > "$DEV/lm3630a_cold_light"
               echo 0 > "$DEV/lm3630a_warm_light" ;;
+  init_perms) chmod 666 "$DEV/lm3630a_cold_light" "$DEV/lm3630a_warm_light" 2>/dev/null ;;
   *)          echo "unknown" ;;
 esac

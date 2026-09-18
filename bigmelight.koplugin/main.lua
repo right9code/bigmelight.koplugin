@@ -1,17 +1,20 @@
 --[[--
 Bigme HiBreak front-light control plugin.
 
-Drives the TI LM3630A dual-string LED driver through a small root helper
+Drives the TI LM3630A dual-string LED driver through direct sysfs I/O
+(zero process fork latency) with automatic fallback to a root helper
 script installed on demand to /data/local/tmp/bigme_light.sh.
 
 The helper is embedded in this file (base64) and installed by the plugin
 itself through Magisk, so no PC or manual adb push is required. The user
 only needs to grant root (superuser) once when Magisk prompts.
 
-Runtime notes:
-  - Pre-warms `su` on init so the first gesture isn't slow
-  - Uses os.execute() for writes (fast, no read overhead)
-  - Requires root (Magisk); the driver nodes are kernel-provided
+Runtime features:
+  - Direct sysfs I/O (chmod 666 on init) for <1ms response on gestures
+  - Magisk root fallback when direct sysfs access is restricted
+  - Power management: automatically turns off LEDs on sleep and restores on wake
+  - Touch presets (Day, Reading, Night, Off) and dual steppers
+  - Pre-warms `su` on init so root fallback isn't slow
 
 Hardware (Bigme HiBreak / B6):
   /sys/bus/i2c/devices/2-0036/lm3630a_cold_light   (0-255)
@@ -20,6 +23,7 @@ Hardware (Bigme HiBreak / B6):
 @module koplugin.bigmelight
 --]]--
 
+local ButtonDialog = require("ui/widget/buttondialog")
 local DataStorage = require("datastorage")
 local Dispatcher = require("dispatcher")
 local InfoMessage = require("ui/widget/infomessage")
@@ -36,10 +40,35 @@ local T = ffiUtil.template
 
 local HELPER_PATH = "/data/local/tmp/bigme_light.sh"
 local DEV_PATH = "/sys/bus/i2c/devices/2-0036"
+local COLD_NODE = DEV_PATH .. "/lm3630a_cold_light"
+local WARM_NODE = DEV_PATH .. "/lm3630a_warm_light"
 local MAX_VAL = 255
 
--- Embedded helper script (bigme_light.sh). Kept in sync with the repo copy.
-local HELPER_B64 = "IyEvc3lzdGVtL2Jpbi9zaApERVY9L3N5cy9idXMvaTJjL2RldmljZXMvMi0wMDM2CmNhc2UgIiQxIiBpbgogIHJlYWRfY29sZCkgIGNhdCAiJERFVi9sbTM2MzBhX2NvbGRfbGlnaHQiIDs7CiAgcmVhZF93YXJtKSAgY2F0ICIkREVWL2xtMzYzMGFfd2FybV9saWdodCIgOzsKICBzZXRfY29sZCkgICBlY2hvICIkMiIgPiAiJERFVi9sbTM2MzBhX2NvbGRfbGlnaHQiIDs7CiAgc2V0X3dhcm0pICAgZWNobyAiJDIiID4gIiRERVYvbG0zNjMwYV93YXJtX2xpZ2h0IiA7OwogIG9mZikgICAgICAgIGVjaG8gMCA+ICIkREVWL2xtMzYzMGFfY29sZF9saWdodCIKICAgICAgICAgICAgICBlY2hvIDAgPiAiJERFVi9sbTM2MzBhX3dhcm1fbGlnaHQiIDs7CiAgKikgICAgICAgICAgZWNobyAidW5rbm93biIgOzsKZXNhYwo="
+-- Embedded helper script (bigme_light.sh). Kept in sync with helper/bigme_light.sh.
+local HELPER_B64 = "IyEvc3lzdGVtL2Jpbi9zaAojIEJpZ21lIEhpQnJlYWsgLyBCNiBmcm9udC1saWdodCBoZWxwZXIgKFRJIExNMzYzMEEpLgojCiMgVGhpcyBmaWxlIGlzIGEgcmVmZXJlbmNlIGNvcHkuIFRoZSBwbHVnaW4gZW1iZWRzIGl0IChiYXNlNjQpIGluIG1haW4ubHVhIGFuZAojIGluc3RhbGxzIGl0IHRvIC9kYXRhL2xvY2FsL3RtcC9iaWdtZV9saWdodC5zaCBvbiBkZW1hbmQsIHNvIHVzZXJzIG5ldmVyIG5lZWQKIyB0byBwbGFjZSBpdCBtYW51YWxseS4KIwojIFVzYWdlOgojICAgYmlnbWVfbGlnaHQuc2ggcmVhZF9jb2xkIHwgcmVhZF93YXJtCiMgICBiaWdtZV9saWdodC5zaCBzZXRfY29sZCA8MC0yNTU+IHwgc2V0X3dhcm0gPDAtMjU1PgojICAgYmlnbWVfbGlnaHQuc2ggc2V0X2JvdGggPGNvbGQgMC0yNTU+IDx3YXJtIDAtMjU1PgojICAgYmlnbWVfbGlnaHQuc2ggb2ZmCiMgICBiaWdtZV9saWdodC5zaCBpbml0X3Blcm1zCkRFVj0vc3lzL2J1cy9pMmMvZGV2aWNlcy8yLTAwMzYKY2FzZSAiJDEiIGluCiAgcmVhZF9jb2xkKSAgY2F0ICIkREVWL2xtMzYzMGFfY29sZF9saWdodCIgOzsKICByZWFkX3dhcm0pICBjYXQgIiRERVYvbG0zNjMwYV93YXJtX2xpZ2h0IiA7OwogIHNldF9jb2xkKSAgIGVjaG8gIiQyIiA+ICIkREVWL2xtMzYzMGFfY29sZF9saWdodCIgOzsKICBzZXRfd2FybSkgICBlY2hvICIkMiIgPiAiJERFVi9sbTM2MzBhX3dhcm1fbGlnaHQiIDs7CiAgc2V0X2JvdGgpICAgZWNobyAiJDIiID4gIiRERVYvbG0zNjMwYV9jb2xkX2xpZ2h0IgogICAgICAgICAgICAgIGVjaG8gIiQzIiA+ICIkREVWL2xtMzYzMGFfd2FybV9saWdodCIgOzsKICBvZmYpICAgICAgICBlY2hvIDAgPiAiJERFVi9sbTM2MzBhX2NvbGRfbGlnaHQiCiAgICAgICAgICAgICAgZWNobyAwID4gIiRERVYvbG0zNjMwYV93YXJtX2xpZ2h0IiA7OwogIGluaXRfcGVybXMpIGNobW9kIDY2NiAiJERFVi9sbTM2MzBhX2NvbGRfbGlnaHQiICIkREVWL2xtMzYzMGFfd2FybV9saWdodCIgMj4vZGV2L251bGwgOzsKICAqKSAgICAgICAgICBlY2hvICJ1bmtub3duIiA7Owplc2FjCg=="
+
+-- Direct sysfs I/O flag
+local direct_io_ok = false
+
+local function try_direct_write(path, val)
+    local f = io.open(path, "w")
+    if f then
+        f:write(tostring(val))
+        f:close()
+        return true
+    end
+    return false
+end
+
+local function try_direct_read(path)
+    local f = io.open(path, "r")
+    if f then
+        local val = f:read("*number")
+        f:close()
+        return val
+    end
+    return nil
+end
 
 -- Run a command through root and return trimmed stdout (or nil on failure).
 local function su_line(cmd)
@@ -63,37 +92,66 @@ local function has_root()
 end
 
 local function driver_present()
-    return su_line(string.format("test -e %s/lm3630a_cold_light && echo yes || echo no", DEV_PATH)) == "yes"
+    return su_line(string.format("test -e %s && echo yes || echo no", COLD_NODE)) == "yes"
 end
 
 local function helper_installed()
     return su_line(string.format("test -x %s && echo yes || echo no", HELPER_PATH)) == "yes"
 end
 
+-- Configure permissions for zero-latency direct sysfs I/O
+local function init_direct_io()
+    os.execute(string.format("su -c 'chmod 666 %s %s 2>/dev/null'", COLD_NODE, WARM_NODE))
+    local test_val = try_direct_read(COLD_NODE)
+    if test_val ~= nil and try_direct_write(COLD_NODE, test_val) then
+        direct_io_ok = true
+        logger.info("BigmeLight: direct sysfs I/O active (zero latency)")
+    else
+        direct_io_ok = false
+        logger.info("BigmeLight: direct sysfs I/O unavailable, using root helper")
+    end
+    return direct_io_ok
+end
+
 -- Install or repair the embedded helper script through root.
 local function install_helper()
     local cmd = string.format(
-        "echo %s | base64 -d > %s && chmod 755 %s",
-        HELPER_B64, HELPER_PATH, HELPER_PATH)
+        "echo %s | base64 -d > %s && chmod 755 %s && chmod 666 %s %s 2>/dev/null",
+        HELPER_B64, HELPER_PATH, HELPER_PATH, COLD_NODE, WARM_NODE)
     os.execute(string.format("su -c '%s'", cmd))
+    init_direct_io()
     return helper_installed()
 end
 
--- Write to driver (fire-and-forget, no wait needed)
+-- Write to driver (prefers direct I/O for zero latency, falls back to su)
 local function set_cold(v)
+    if direct_io_ok and try_direct_write(COLD_NODE, v) then
+        return
+    end
     os.execute(string.format("su -c '%s set_cold %d'", HELPER_PATH, v))
 end
 
 local function set_warm(v)
+    if direct_io_ok and try_direct_write(WARM_NODE, v) then
+        return
+    end
     os.execute(string.format("su -c '%s set_warm %d'", HELPER_PATH, v))
 end
 
 local function set_both(c, w)
-    os.execute(string.format("su -c '%s set_cold %d && %s set_warm %d'", HELPER_PATH, c, HELPER_PATH, w))
+    if direct_io_ok and try_direct_write(COLD_NODE, c) and try_direct_write(WARM_NODE, w) then
+        return
+    end
+    os.execute(string.format("su -c '%s set_both %d %d'", HELPER_PATH, c, w))
 end
 
--- Read from driver (needs result, so use io.popen)
+-- Read from driver (direct I/O or su read)
 local function read_val(what)
+    local node = (what == "cold") and COLD_NODE or WARM_NODE
+    if direct_io_ok then
+        local val = try_direct_read(node)
+        if val ~= nil then return val end
+    end
     local handle = io.popen(string.format("su -c '%s read_%s'", HELPER_PATH, what))
     if not handle then return nil end
     local result = handle:read("*number")
@@ -101,7 +159,7 @@ local function read_val(what)
     return result
 end
 
--- Plugin
+-- Plugin class
 local BigmeLight = WidgetContainer:extend{
     name = "bigmelight",
     settings_file = DataStorage:getSettingsDir() .. "/bigmelight.lua",
@@ -109,7 +167,10 @@ local BigmeLight = WidgetContainer:extend{
     current_cold = 0,
     current_warm = 0,
     gesture_step = 10,
+    turn_off_on_suspend = true,
     _initialized = false,
+    _suspended_cold = nil,
+    _suspended_warm = nil,
     root_ok = false,
     driver_ok = false,
     helper_ok = false,
@@ -118,16 +179,21 @@ local BigmeLight = WidgetContainer:extend{
 function BigmeLight:init()
     self.settings = LuaSettings:open(self.settings_file)
     self.gesture_step = self.settings:readSetting("gesture_step") or 10
+    local suspend_setting = self.settings:readSetting("turn_off_on_suspend")
+    if suspend_setting ~= nil then
+        self.turn_off_on_suspend = suspend_setting
+    else
+        self.turn_off_on_suspend = true
+    end
 
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
 
-    -- Defer hardware access to avoid blocking init
+    -- Defer hardware access to avoid blocking KOReader init
     UIManager:scheduleIn(0.5, function() self:_postInit() end)
 end
 
 function BigmeLight:_postInit()
-    -- Pre-warm su so gestures are fast from the start
     warm_su()
 
     self.root_ok = has_root()
@@ -156,11 +222,14 @@ function BigmeLight:_postInit()
         end
     end
 
+    -- Try direct sysfs I/O optimization
+    init_direct_io()
+
     -- Read current hardware state
     self.current_cold = read_val("cold") or 0
     self.current_warm = read_val("warm") or 0
     self._initialized = true
-    logger.dbg("BigmeLight: ready, cold=", self.current_cold, "warm=", self.current_warm)
+    logger.dbg("BigmeLight: ready, cold=", self.current_cold, "warm=", self.current_warm, "direct_io=", direct_io_ok)
 end
 
 function BigmeLight:_ensureReady()
@@ -178,6 +247,32 @@ function BigmeLight:_ensureReady()
     end
     return true
 end
+
+-- --- Power Management (Sleep / Wake) ---
+
+function BigmeLight:onSuspend()
+    if not self.turn_off_on_suspend then return end
+    self._suspended_cold = self.current_cold
+    self._suspended_warm = self.current_warm
+    if (self.current_cold and self.current_cold > 0) or (self.current_warm and self.current_warm > 0) then
+        set_both(0, 0)
+        logger.dbg("BigmeLight: device suspended; turned off LEDs")
+    end
+end
+
+function BigmeLight:onResume()
+    if not self.turn_off_on_suspend then return end
+    if self._suspended_cold and self._suspended_warm then
+        if self._suspended_cold > 0 or self._suspended_warm > 0 then
+            set_both(self._suspended_cold, self._suspended_warm)
+            self.current_cold = self._suspended_cold
+            self.current_warm = self._suspended_warm
+            logger.dbg("BigmeLight: device resumed; restored cold=", self.current_cold, "warm=", self.current_warm)
+        end
+    end
+end
+
+-- --- Dispatcher Actions ---
 
 function BigmeLight:onDispatcherRegisterActions()
     Dispatcher:registerAction("bigme_cold_up",
@@ -201,12 +296,21 @@ function BigmeLight:onDispatcherRegisterActions()
     Dispatcher:registerAction("bigme_light_toggle",
         {category="none", event="BigmeLightToggle",
          title=_("Bigme: toggle front light"), screen=true})
+    Dispatcher:registerAction("bigme_preset_day",
+        {category="none", event="BigmePresetDay",
+         title=_("Bigme: preset Daytime (cold 80, warm 0)"), screen=true})
+    Dispatcher:registerAction("bigme_preset_read",
+        {category="none", event="BigmePresetRead",
+         title=_("Bigme: preset Reading (cold 50, warm 60)"), screen=true})
+    Dispatcher:registerAction("bigme_preset_night",
+        {category="none", event="BigmePresetNight",
+         title=_("Bigme: preset Bedtime (cold 0, warm 50)"), screen=true})
     Dispatcher:registerAction("bigme_eink_center",
         {category="none", event="BigmeEinkCenter",
          title=_("Bigme: EinkCenter panel"), screen=true})
 end
 
--- --- Event handlers ---
+-- --- Event Handlers ---
 
 function BigmeLight:onBigmeColdUp(arg)
     if not self:_ensureReady() then return true end
@@ -215,7 +319,7 @@ function BigmeLight:onBigmeColdUp(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_cold = math.min(MAX_VAL, self.current_cold + step)
     set_cold(self.current_cold)
-    self:_notify("Cold: " .. self.current_cold .. "/255")
+    self:_notify(T(_("Cold: %1/255"), self.current_cold))
     return true
 end
 
@@ -226,7 +330,7 @@ function BigmeLight:onBigmeColdDown(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_cold = math.max(0, self.current_cold - step)
     set_cold(self.current_cold)
-    self:_notify("Cold: " .. self.current_cold .. "/255")
+    self:_notify(T(_("Cold: %1/255"), self.current_cold))
     return true
 end
 
@@ -237,7 +341,7 @@ function BigmeLight:onBigmeWarmUp(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_warm = math.min(MAX_VAL, self.current_warm + step)
     set_warm(self.current_warm)
-    self:_notify("Warm: " .. self.current_warm .. "/255")
+    self:_notify(T(_("Warm: %1/255"), self.current_warm))
     return true
 end
 
@@ -248,13 +352,13 @@ function BigmeLight:onBigmeWarmDown(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_warm = math.max(0, self.current_warm - step)
     set_warm(self.current_warm)
-    self:_notify("Warm: " .. self.current_warm .. "/255")
+    self:_notify(T(_("Warm: %1/255"), self.current_warm))
     return true
 end
 
 function BigmeLight:onBigmeLightOff()
     if not self:_ensureReady() then return true end
-    os.execute(string.format("su -c '%s off'", HELPER_PATH))
+    set_both(0, 0)
     self.current_cold = 0
     self.current_warm = 0
     self:_notify(_("Lights off"))
@@ -277,7 +381,7 @@ function BigmeLight:onBigmeLightToggle()
         self.settings:saveSetting("last_cold", self.current_cold)
         self.settings:saveSetting("last_warm", self.current_warm)
         self.settings:flush()
-        os.execute(string.format("su -c '%s off'", HELPER_PATH))
+        set_both(0, 0)
         self.current_cold = 0
         self.current_warm = 0
         self:_notify(_("Lights off"))
@@ -285,64 +389,104 @@ function BigmeLight:onBigmeLightToggle()
     return true
 end
 
--- --- EinkCenter panel ---
+function BigmeLight:applyPreset(c, w, name)
+    if not self:_ensureReady() then return end
+    self.current_cold = c
+    self.current_warm = w
+    set_both(c, w)
+    self:_notify(T(_("%1: cold=%2 warm=%3"), name, c, w))
+end
 
-function BigmeLight:onBigmeEinkCenter()
-    warm_su()
-    local handle = io.popen("su -c 'content call --uri content://com.xrz.SettingProvider --method setting_einkcenter'")
-    if handle then handle:close() end
+function BigmeLight:onBigmePresetDay()
+    self:applyPreset(80, 0, _("Daytime"))
     return true
 end
 
--- --- Dialog ---
+function BigmeLight:onBigmePresetRead()
+    self:applyPreset(50, 60, _("Reading"))
+    return true
+end
+
+function BigmeLight:onBigmePresetNight()
+    self:applyPreset(0, 50, _("Bedtime"))
+    return true
+end
+
+function BigmeLight:onBigmeEinkCenter()
+    warm_su()
+    os.execute("su -c 'content call --uri content://com.xrz.SettingProvider --method setting_einkcenter' >/dev/null 2>&1")
+    return true
+end
+
+-- --- UI Dialogs ---
 
 function BigmeLight:onBigmeShowLightDialog()
     if not self:_ensureReady() then return true end
 
-    self.current_cold = read_val("cold") or 0
-    self.current_warm = read_val("warm") or 0
+    self.current_cold = read_val("cold") or self.current_cold
+    self.current_warm = read_val("warm") or self.current_warm
 
     local dialog
-    dialog = InputDialog:new{
-        title = _("Bigme Front Light"),
-        input = tostring(self.current_cold),
-        input_hint = _("Cold (0-255)"),
-        description = T(_("Warm: %1/255"), self.current_warm),
+    local function refresh_title()
+        if dialog and dialog.title_widget then
+            dialog.title_widget:setText(T(_("Cold: %1/255 | Warm: %2/255"), self.current_cold, self.current_warm))
+        end
+    end
+
+    dialog = ButtonDialog:new{
+        title = T(_("Cold: %1/255 | Warm: %2/255"), self.current_cold, self.current_warm),
         buttons = {
             {
-                { text = _("Off"), callback = function()
-                    UIManager:close(dialog)
-                    self:onBigmeLightOff()
+                { text = _("Cold -10"), callback = function()
+                    self.current_cold = math.max(0, self.current_cold - 10)
+                    set_cold(self.current_cold)
+                    refresh_title()
+                    self:_notify(T(_("Cold: %1/255"), self.current_cold))
                 end },
-                { text = _("Warm-"), callback = function()
-                    self.current_warm = math.max(0, self.current_warm - self.gesture_step)
-                    set_warm(self.current_warm)
-                    self.current_cold = read_val("cold") or self.current_cold
-                    dialog.description = T(_("Warm: %1/255"), self.current_warm)
-                    dialog:setInputText(tostring(self.current_cold))
+                { text = _("Cold +10"), callback = function()
+                    self.current_cold = math.min(MAX_VAL, self.current_cold + 10)
+                    set_cold(self.current_cold)
+                    refresh_title()
+                    self:_notify(T(_("Cold: %1/255"), self.current_cold))
                 end },
-                { text = _("Warm+"), callback = function()
-                    self.current_warm = math.min(MAX_VAL, self.current_warm + self.gesture_step)
+                { text = _("Warm -10"), callback = function()
+                    self.current_warm = math.max(0, self.current_warm - 10)
                     set_warm(self.current_warm)
-                    self.current_cold = read_val("cold") or self.current_cold
-                    dialog.description = T(_("Warm: %1/255"), self.current_warm)
-                    dialog:setInputText(tostring(self.current_cold))
+                    refresh_title()
+                    self:_notify(T(_("Warm: %1/255"), self.current_warm))
+                end },
+                { text = _("Warm +10"), callback = function()
+                    self.current_warm = math.min(MAX_VAL, self.current_warm + 10)
+                    set_warm(self.current_warm)
+                    refresh_title()
+                    self:_notify(T(_("Warm: %1/255"), self.current_warm))
                 end },
             },
             {
-                { text = _("Set"), is_enter_default = true, callback = function()
-                    local val = tonumber(dialog:getInputText())
-                    if val and val >= 0 and val <= MAX_VAL then
-                        self.current_cold = val
-                        set_cold(val)
-                        self:_notify(T(_("Cold: %1, Warm: %2"), self.current_cold, self.current_warm))
-                        UIManager:close(dialog)
-                    else
-                        UIManager:show(InfoMessage:new{
-                            text = _("Enter a value between 0 and 255"),
-                            timeout = 2,
-                        })
-                    end
+                { text = _("☀️ Day"), callback = function()
+                    self:applyPreset(80, 0, _("Daytime"))
+                    refresh_title()
+                end },
+                { text = _("📖 Read"), callback = function()
+                    self:applyPreset(50, 60, _("Reading"))
+                    refresh_title()
+                end },
+                { text = _("🌙 Night"), callback = function()
+                    self:applyPreset(0, 50, _("Bedtime"))
+                    refresh_title()
+                end },
+                { text = _("🌑 Off"), callback = function()
+                    self:onBigmeLightOff()
+                    refresh_title()
+                end },
+            },
+            {
+                { text = _("Set exact value..."), callback = function()
+                    UIManager:close(dialog)
+                    self:showExactInputDialog()
+                end },
+                { text = _("Close"), is_enter_default = true, callback = function()
+                    UIManager:close(dialog)
                 end },
             },
         },
@@ -351,12 +495,45 @@ function BigmeLight:onBigmeShowLightDialog()
     return true
 end
 
--- --- Setup helpers ---
+function BigmeLight:showExactInputDialog()
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Set Exact Cold Light (0-255)"),
+        input = tostring(self.current_cold),
+        input_hint = _("Cold (0-255)"),
+        description = T(_("Current Warm: %1/255"), self.current_warm),
+        buttons = {
+            {
+                { text = _("Cancel"), callback = function()
+                    UIManager:close(dialog)
+                end },
+                { text = _("Set"), is_enter_default = true, callback = function()
+                    local val = tonumber(dialog:getInputText())
+                    if val and val >= 0 and val <= MAX_VAL then
+                        self.current_cold = val
+                        set_cold(val)
+                        UIManager:close(dialog)
+                        self:_notify(T(_("Cold: %1, Warm: %2"), self.current_cold, self.current_warm))
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Enter a number between 0 and 255"),
+                            timeout = 2,
+                        })
+                    end
+                end },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+-- --- Setup and Health Checks ---
 
 function BigmeLight:checkSetup()
     local root = has_root()
     local driver = root and driver_present()
     local helper = driver and helper_installed()
+    local direct = driver and init_direct_io()
 
     self.root_ok = root
     self.driver_ok = driver
@@ -366,15 +543,16 @@ function BigmeLight:checkSetup()
         T(_("Root (Magisk): %1"), root and _("OK") or _("MISSING")),
         T(_("LM3630A driver: %1"), driver and _("OK") or _("MISSING")),
         T(_("Helper script: %1"), helper and _("OK") or _("MISSING")),
+        T(_("Direct sysfs I/O: %1"), direct and _("ACTIVE (fastest)") or _("FALLBACK (via root)")),
     }
     if not root then
-        lines[#lines + 1] = _("Grant superuser to KOReader in Magisk, then run Install / update helper.")
+        lines[#lines + 1] = _("\nGrant superuser to KOReader in Magisk, then run Install / update helper.")
     elseif not driver then
-        lines[#lines + 1] = _("This device does not expose the Bigme LM3630A front-light driver.")
+        lines[#lines + 1] = _("\nThis device does not expose the Bigme LM3630A front-light driver.")
     elseif not helper then
-        lines[#lines + 1] = _("Run Install / update helper to install it.")
+        lines[#lines + 1] = _("\nRun Install / update helper to install it.")
     else
-        lines[#lines + 1] = T(_("Status: cold=%1 warm=%2"), self.current_cold, self.current_warm)
+        lines[#lines + 1] = T(_("\nStatus: cold=%1 warm=%2"), self.current_cold, self.current_warm)
     end
 
     UIManager:show(InfoMessage:new{
@@ -412,7 +590,8 @@ function BigmeLight:installOrUpdateHelper()
         self._initialized = true
         UIManager:show(InfoMessage:new{
             title = _("Bigme Light setup"),
-            text = T(_("Helper installed to:\n%1\n\nStatus: cold=%2 warm=%3"), HELPER_PATH, self.current_cold, self.current_warm),
+            text = T(_("Helper installed to:\n%1\nDirect I/O: %2\nStatus: cold=%3 warm=%4"),
+                HELPER_PATH, direct_io_ok and _("ACTIVE") or _("FALLBACK"), self.current_cold, self.current_warm),
         })
     else
         UIManager:show(InfoMessage:new{
@@ -432,6 +611,27 @@ function BigmeLight:addToMainMenu(menu_items)
                 text = _("Light control dialog"),
                 keep_menu_open = true,
                 callback = function() self:onBigmeShowLightDialog() end,
+            },
+            {
+                text = _("Quick presets"),
+                sub_item_table = {
+                    {
+                        text = _("☀️ Daytime (cold 80, warm 0)"),
+                        callback = function() self:onBigmePresetDay() end,
+                    },
+                    {
+                        text = _("📖 Reading (cold 50, warm 60)"),
+                        callback = function() self:onBigmePresetRead() end,
+                    },
+                    {
+                        text = _("🌙 Bedtime (cold 0, warm 50)"),
+                        callback = function() self:onBigmePresetNight() end,
+                    },
+                    {
+                        text = _("🌑 All off"),
+                        callback = function() self:onBigmeLightOff() end,
+                    },
+                },
             },
             {
                 text = T(_("Step size: %1"), self.gesture_step),
@@ -458,6 +658,15 @@ function BigmeLight:addToMainMenu(menu_items)
                 end,
             },
             {
+                text = _("Turn off on sleep"),
+                checked_func = function() return self.turn_off_on_suspend end,
+                callback = function()
+                    self.turn_off_on_suspend = not self.turn_off_on_suspend
+                    self.settings:saveSetting("turn_off_on_suspend", self.turn_off_on_suspend)
+                    self.settings:flush()
+                end,
+            },
+            {
                 text = _("All off"),
                 callback = function() self:onBigmeLightOff() end,
             },
@@ -479,7 +688,8 @@ function BigmeLight:addToMainMenu(menu_items)
             {
                 text_func = function()
                     if self._initialized then
-                        return T(_("Status: cold=%1 warm=%2"), self.current_cold, self.current_warm)
+                        local mode = direct_io_ok and _("Direct") or _("Root")
+                        return T(_("Status: C=%1 W=%2 (%3)"), self.current_cold, self.current_warm, mode)
                     else
                         return _("Status: initializing...")
                     end
