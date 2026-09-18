@@ -101,7 +101,7 @@ end
 
 -- Configure permissions for zero-latency direct sysfs I/O
 local function init_direct_io()
-    os.execute(string.format("su -c 'chmod 666 %s %s 2>/dev/null'", COLD_NODE, WARM_NODE))
+    os.execute(string.format("su -c 'chmod 666 %s %s && (magiskpolicy --live \"allow untrusted_app_all sysfs file { read write open getattr }\" 2>/dev/null || magiskpolicy --live \"allow untrusted_app_30 sysfs file { read write open getattr }\" 2>/dev/null || supolicy --live \"allow untrusted_app sysfs file { read write open getattr }\" 2>/dev/null)' 2>/dev/null", COLD_NODE, WARM_NODE))
     local test_val = try_direct_read(COLD_NODE)
     if test_val ~= nil and try_direct_write(COLD_NODE, test_val) then
         direct_io_ok = true
