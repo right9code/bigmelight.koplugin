@@ -8,9 +8,9 @@ The plugin talks directly to the TI **LM3630A** dual-string LED driver through r
 
 - **Zero-latency direct sysfs I/O** — sets permissions on startup so swipe gestures write directly (<1ms) without spawning subshells or causing UI lag (with seamless root fallback).
 - **Power management** — turns off front lights during device sleep/standby to prevent battery drain, and restores them on resume.
-- **Quick presets & touch dialog** — instant touch presets (Daytime, Reading, Bedtime, Off) and fine-tuning steppers without requiring slow virtual keyboards.
+- **Custom presets & touch dialog** — built-in presets (Daytime, Reading, Bedtime) that you can edit, plus your own presets saved from current values; fine-tuning steppers without slow virtual keyboards.
 - **Menu control** — dedicated `Bigme Light` menu with presets, step size, sleep power management toggle, and EinkCenter panel.
-- **Gesture support** — assign swipes/taps to cold/warm up & down, presets, light toggle, or dialog.
+- **Gesture support** — assign swipes/taps to cool/warm up & down, presets, light toggle, or dialog.
 - **Self-contained setup** — helper script is embedded in the plugin and auto-installed through Magisk. No external files to place manually.
 - **Cold + warm channels** — independently control both LED strings from 0 to 255.
 - **Toggle with memory** — turning the light off remembers the last cold/warm values and restores them when turned back on.
@@ -29,7 +29,7 @@ The plugin talks directly to the TI **LM3630A** dual-string LED driver through r
 
 The plugin is a folder. You can install it entirely on the device — no computer needed.
 
-1. Download `bigmelight-v1.1.0.zip` from the [Releases](https://github.com/right9code/bigmelight.koplugin/releases) page (open the link in the device browser, or use KOReader's file browser / cloud storage).
+1. Download `bigmelight-v1.2.0.zip` from the [Releases](https://github.com/right9code/bigmelight.koplugin/releases) page (open the link in the device browser, or use KOReader's file browser / cloud storage).
 2. Unzip it so the folder lands here:
    ```
    /sdcard/koreader/plugins/bigmelight.koplugin/
@@ -61,7 +61,7 @@ Open **Bigme Light** in the KOReader menu:
 | Entry | Description |
 |---|---|
 | **Light control dialog** | Interactive touch dialog with steppers, presets, and off |
-| **Quick presets** | Instant presets: Daytime, Reading, Bedtime, All off |
+| **Quick presets** | Your presets (editable): tap to apply, hold to edit or delete, add your own |
 | **Step size: N** | How much each gesture changes the light (1–50) |
 | **Turn off on sleep** | Power saving toggle: turns off LEDs on sleep, restores on wake |
 | **All off** | Turn both channels off |
@@ -107,5 +107,5 @@ bigmelight.koplugin/
 ---
 
 **Author**: right9code  
-**Version**: 1.1.0  
+**Version**: 1.2.0  
 **License**: [Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/)

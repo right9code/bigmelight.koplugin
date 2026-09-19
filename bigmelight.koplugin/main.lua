@@ -44,8 +44,15 @@ local COLD_NODE = DEV_PATH .. "/lm3630a_cold_light"
 local WARM_NODE = DEV_PATH .. "/lm3630a_warm_light"
 local MAX_VAL = 255
 
+-- Built-in presets; users can edit these and add their own (persisted to settings)
+local DEFAULT_PRESETS = {
+    { name = _("☀️ Daytime"), cold = 80, warm = 0 },
+    { name = _("📖 Reading"), cold = 50, warm = 60 },
+    { name = _("🌙 Bedtime"), cold = 0, warm = 50 },
+}
+
 -- Embedded helper script (bigme_light.sh). Kept in sync with helper/bigme_light.sh.
-local HELPER_B64 = "IyEvc3lzdGVtL2Jpbi9zaAojIEJpZ21lIEhpQnJlYWsgLyBCNiBmcm9udC1saWdodCBoZWxwZXIgKFRJIExNMzYzMEEpLgojCiMgVGhpcyBmaWxlIGlzIGEgcmVmZXJlbmNlIGNvcHkuIFRoZSBwbHVnaW4gZW1iZWRzIGl0IChiYXNlNjQpIGluIG1haW4ubHVhIGFuZAojIGluc3RhbGxzIGl0IHRvIC9kYXRhL2xvY2FsL3RtcC9iaWdtZV9saWdodC5zaCBvbiBkZW1hbmQsIHNvIHVzZXJzIG5ldmVyIG5lZWQKIyB0byBwbGFjZSBpdCBtYW51YWxseS4KIwojIFVzYWdlOgojICAgYmlnbWVfbGlnaHQuc2ggcmVhZF9jb2xkIHwgcmVhZF93YXJtCiMgICBiaWdtZV9saWdodC5zaCBzZXRfY29sZCA8MC0yNTU+IHwgc2V0X3dhcm0gPDAtMjU1PgojICAgYmlnbWVfbGlnaHQuc2ggc2V0X2JvdGggPGNvbGQgMC0yNTU+IDx3YXJtIDAtMjU1PgojICAgYmlnbWVfbGlnaHQuc2ggb2ZmCiMgICBiaWdtZV9saWdodC5zaCBpbml0X3Blcm1zCkRFVj0vc3lzL2J1cy9pMmMvZGV2aWNlcy8yLTAwMzYKY2FzZSAiJDEiIGluCiAgcmVhZF9jb2xkKSAgY2F0ICIkREVWL2xtMzYzMGFfY29sZF9saWdodCIgOzsKICByZWFkX3dhcm0pICBjYXQgIiRERVYvbG0zNjMwYV93YXJtX2xpZ2h0IiA7OwogIHNldF9jb2xkKSAgIGVjaG8gIiQyIiA+ICIkREVWL2xtMzYzMGFfY29sZF9saWdodCIgOzsKICBzZXRfd2FybSkgICBlY2hvICIkMiIgPiAiJERFVi9sbTM2MzBhX3dhcm1fbGlnaHQiIDs7CiAgc2V0X2JvdGgpICAgZWNobyAiJDIiID4gIiRERVYvbG0zNjMwYV9jb2xkX2xpZ2h0IgogICAgICAgICAgICAgIGVjaG8gIiQzIiA+ICIkREVWL2xtMzYzMGFfd2FybV9saWdodCIgOzsKICBvZmYpICAgICAgICBlY2hvIDAgPiAiJERFVi9sbTM2MzBhX2NvbGRfbGlnaHQiCiAgICAgICAgICAgICAgZWNobyAwID4gIiRERVYvbG0zNjMwYV93YXJtX2xpZ2h0IiA7OwogIGluaXRfcGVybXMpIGNobW9kIDY2NiAiJERFVi9sbTM2MzBhX2NvbGRfbGlnaHQiICIkREVWL2xtMzYzMGFfd2FybV9saWdodCIgMj4vZGV2L251bGwgOzsKICAqKSAgICAgICAgICBlY2hvICJ1bmtub3duIiA7Owplc2FjCg=="
+local HELPER_B64 = "IyEvc3lzdGVtL2Jpbi9zaAojIEJpZ21lIEhpQnJlYWsgLyBCNiBmcm9udC1saWdodCBoZWxwZXIgKFRJIExNMzYzMEEpLgojCiMgVGhpcyBmaWxlIGlzIGEgcmVmZXJlbmNlIGNvcHkuIFRoZSBwbHVnaW4gZW1iZWRzIGl0IChiYXNlNjQpIGluIG1haW4ubHVhIGFuZAojIGluc3RhbGxzIGl0IHRvIC9kYXRhL2xvY2FsL3RtcC9iaWdtZV9saWdodC5zaCBvbiBkZW1hbmQsIHNvIHVzZXJzIG5ldmVyIG5lZWQKIyB0byBwbGFjZSBpdCBtYW51YWxseS4KIwojIFVzYWdlOgojICAgYmlnbWVfbGlnaHQuc2ggcmVhZF9jb2xkIHwgcmVhZF93YXJtCiMgICBiaWdtZV9saWdodC5zaCBzZXRfY29sZCA8MC0yNTU+IHwgc2V0X3dhcm0gPDAtMjU1PgojICAgYmlnbWVfbGlnaHQuc2ggb2ZmCkRFVj0vc3lzL2J1cy9pMmMvZGV2aWNlcy8yLTAwMzYKY2FzZSAiJDEiIGluCiAgcmVhZF9jb2xkKSAgY2F0ICIkREVWL2xtMzYzMGFfY29sZF9saWdodCIgOzsKICByZWFkX3dhcm0pICBjYXQgIiRERVYvbG0zNjMwYV93YXJtX2xpZ2h0IiA7OwogIHNldF9jb2xkKSAgIGVjaG8gIiQyIiA+ICIkREVWL2xtMzYzMGFfY29sZF9saWdodCIgOzsKICBzZXRfd2FybSkgICBlY2hvICIkMiIgPiAiJERFVi9sbTM2MzBhX3dhcm1fbGlnaHQiIDs7CiAgc2V0X2JvdGgpICAgZWNobyAiJDIiID4gIiRERVYvbG0zNjMwYV9jb2xkX2xpZ2h0IgogICAgICAgICAgICAgIGVjaG8gIiQzIiA+ICIkREVWL2xtMzYzMGFfd2FybV9saWdodCIgOzsKICBvZmYpICAgICAgICBlY2hvIDAgPiAiJERFVi9sbTM2MzBhX2NvbGRfbGlnaHQiCiAgICAgICAgICAgICAgZWNobyAwID4gIiRERVYvbG0zNjMwYV93YXJtX2xpZ2h0IiA7OwogIGluaXRfcGVybXMpIGNobW9kIDY2NiAiJERFVi9sbTM2MzBhX2NvbGRfbGlnaHQiICIkREVWL2xtMzYzMGFfd2FybV9saWdodCIgMj4vZGV2L251bGwgOzsKICAqKSAgICAgICAgICBlY2hvICJ1bmtub3duIiA7Owplc2FjCg=="
 
 -- Direct sysfs I/O flag
 local direct_io_ok = false
@@ -186,6 +193,17 @@ function BigmeLight:init()
         self.turn_off_on_suspend = true
     end
 
+    -- User presets; seeded with the built-ins on first run
+    self.presets = self.settings:readSetting("presets")
+    if not self.presets then
+        self.presets = {}
+        for _, p in ipairs(DEFAULT_PRESETS) do
+            table.insert(self.presets, { name = p.name, cold = p.cold, warm = p.warm })
+        end
+        self.settings:saveSetting("presets", self.presets)
+        self.settings:flush()
+    end
+
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
 
@@ -262,13 +280,16 @@ end
 
 function BigmeLight:onResume()
     if not self.turn_off_on_suspend then return end
-    if self._suspended_cold and self._suspended_warm then
+    if self._suspended_cold ~= nil and self._suspended_warm ~= nil then
         if self._suspended_cold > 0 or self._suspended_warm > 0 then
             set_both(self._suspended_cold, self._suspended_warm)
             self.current_cold = self._suspended_cold
             self.current_warm = self._suspended_warm
             logger.dbg("BigmeLight: device resumed; restored cold=", self.current_cold, "warm=", self.current_warm)
         end
+        -- Clear saved state so a later off-then-suspend can't restore a stale value
+        self._suspended_cold = nil
+        self._suspended_warm = nil
     end
 end
 
@@ -277,16 +298,16 @@ end
 function BigmeLight:onDispatcherRegisterActions()
     Dispatcher:registerAction("bigme_cold_up",
         {category="incrementalnumber", min=1, max=MAX_VAL,
-         event="BigmeColdUp", title=_("Bigme: increase cold light"), screen=true})
+         event="BigmeColdUp", title=_("Bigme: ❄️ increase cool light"), screen=true})
     Dispatcher:registerAction("bigme_cold_down",
         {category="incrementalnumber", min=1, max=MAX_VAL,
-         event="BigmeColdDown", title=_("Bigme: decrease cold light"), screen=true})
+         event="BigmeColdDown", title=_("Bigme: ❄️ decrease cool light"), screen=true})
     Dispatcher:registerAction("bigme_warm_up",
         {category="incrementalnumber", min=1, max=MAX_VAL,
-         event="BigmeWarmUp", title=_("Bigme: increase warm light"), screen=true})
+         event="BigmeWarmUp", title=_("Bigme: 🔥 increase warm light"), screen=true})
     Dispatcher:registerAction("bigme_warm_down",
         {category="incrementalnumber", min=1, max=MAX_VAL,
-         event="BigmeWarmDown", title=_("Bigme: decrease warm light"), screen=true})
+         event="BigmeWarmDown", title=_("Bigme: 🔥 decrease warm light"), screen=true})
     Dispatcher:registerAction("bigme_light_dialog",
         {category="none", event="BigmeShowLightDialog",
          title=_("Bigme: light control dialog"), screen=true})
@@ -319,7 +340,7 @@ function BigmeLight:onBigmeColdUp(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_cold = math.min(MAX_VAL, self.current_cold + step)
     set_cold(self.current_cold)
-    self:_notify(T(_("Cold: %1/255"), self.current_cold))
+    self:_notify_debounced(T(_("❄️ Cool: %1/255"), self.current_cold))
     return true
 end
 
@@ -330,7 +351,7 @@ function BigmeLight:onBigmeColdDown(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_cold = math.max(0, self.current_cold - step)
     set_cold(self.current_cold)
-    self:_notify(T(_("Cold: %1/255"), self.current_cold))
+    self:_notify_debounced(T(_("❄️ Cool: %1/255"), self.current_cold))
     return true
 end
 
@@ -341,7 +362,7 @@ function BigmeLight:onBigmeWarmUp(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_warm = math.min(MAX_VAL, self.current_warm + step)
     set_warm(self.current_warm)
-    self:_notify(T(_("Warm: %1/255"), self.current_warm))
+    self:_notify_debounced(T(_("🔥 Warm: %1/255"), self.current_warm))
     return true
 end
 
@@ -352,7 +373,7 @@ function BigmeLight:onBigmeWarmDown(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_warm = math.max(0, self.current_warm - step)
     set_warm(self.current_warm)
-    self:_notify(T(_("Warm: %1/255"), self.current_warm))
+    self:_notify_debounced(T(_("🔥 Warm: %1/255"), self.current_warm))
     return true
 end
 
@@ -376,7 +397,7 @@ function BigmeLight:onBigmeLightToggle()
         set_both(saved_cold, saved_warm)
         self.current_cold = saved_cold
         self.current_warm = saved_warm
-        self:_notify(T(_("Lights on: cold=%1 warm=%2"), saved_cold, saved_warm))
+        self:_notify(T(_("Lights on: ❄️%1 🔥%2"), saved_cold, saved_warm))
     else
         self.settings:saveSetting("last_cold", self.current_cold)
         self.settings:saveSetting("last_warm", self.current_warm)
@@ -394,7 +415,7 @@ function BigmeLight:applyPreset(c, w, name)
     self.current_cold = c
     self.current_warm = w
     set_both(c, w)
-    self:_notify(T(_("%1: cold=%2 warm=%3"), name, c, w))
+    self:_notify(T(_("%1: ❄️%2 🔥%3"), name, c, w))
 end
 
 function BigmeLight:onBigmePresetDay()
@@ -412,6 +433,40 @@ function BigmeLight:onBigmePresetNight()
     return true
 end
 
+--- Custom preset management (add / edit / delete, persisted to settings)
+
+function BigmeLight:_savePresets()
+    self.settings:saveSetting("presets", self.presets)
+    self.settings:flush()
+end
+
+-- Apply the preset at index i (bounds-checked)
+function BigmeLight:applyPresetAt(i)
+    local p = self.presets[i]
+    if not p then return end
+    self:applyPreset(p.cold, p.warm, p.name)
+end
+
+function BigmeLight:deletePreset(i)
+    local p = self.presets[i]
+    if not p then return end
+    table.remove(self.presets, i)
+    self:_savePresets()
+    self:_notify(T(_("Preset removed: %1"), p.name))
+end
+
+-- Create or update a preset; nil i means append
+function BigmeLight:savePreset(i, name, cold, warm)
+    local entry = { name = name, cold = cold, warm = warm }
+    if i then
+        self.presets[i] = entry
+    else
+        table.insert(self.presets, entry)
+    end
+    self:_savePresets()
+    self:_notify(T(_("Preset saved: %1"), name))
+end
+
 function BigmeLight:onBigmeEinkCenter()
     warm_su()
     os.execute("su -c 'content call --uri content://com.xrz.SettingProvider --method setting_einkcenter' >/dev/null 2>&1")
@@ -427,39 +482,44 @@ function BigmeLight:onBigmeShowLightDialog()
     self.current_warm = read_val("warm") or self.current_warm
 
     local dialog
+    local COOL = _("❄️")  -- cool/cold channel symbol
+    local WARM = _("🔥")  -- warm/hot channel symbol
     local function refresh_title()
         if dialog and dialog.title_widget then
-            dialog.title_widget:setText(T(_("Cold: %1/255 | Warm: %2/255"), self.current_cold, self.current_warm))
+            dialog.title_widget:setText(T(_("%1 Cold: %2/255 | %3 Warm: %4/255"), COOL, self.current_cold, WARM, self.current_warm))
         end
     end
 
+    local step = self.gesture_step
+    local cool_minus, cool_plus = T(_("❄️ Cool -%1"), step), T(_("❄️ Cool +%1"), step)
+    local warm_minus, warm_plus = T(_("🔥 Warm -%1"), step), T(_("🔥 Warm +%1"), step)
     dialog = ButtonDialog:new{
-        title = T(_("Cold: %1/255 | Warm: %2/255"), self.current_cold, self.current_warm),
+        title = T(_("%1 Cold: %2/255 | %3 Warm: %4/255"), COOL, self.current_cold, WARM, self.current_warm),
         buttons = {
             {
-                { text = _("Cold -10"), callback = function()
-                    self.current_cold = math.max(0, self.current_cold - 10)
+                { text = cool_minus, callback = function()
+                    self.current_cold = math.max(0, self.current_cold - step)
                     set_cold(self.current_cold)
                     refresh_title()
-                    self:_notify(T(_("Cold: %1/255"), self.current_cold))
+                    self:_notify_debounced(T(_("❄️ Cool: %1/255"), self.current_cold))
                 end },
-                { text = _("Cold +10"), callback = function()
-                    self.current_cold = math.min(MAX_VAL, self.current_cold + 10)
+                { text = cool_plus, callback = function()
+                    self.current_cold = math.min(MAX_VAL, self.current_cold + step)
                     set_cold(self.current_cold)
                     refresh_title()
-                    self:_notify(T(_("Cold: %1/255"), self.current_cold))
+                    self:_notify_debounced(T(_("❄️ Cool: %1/255"), self.current_cold))
                 end },
-                { text = _("Warm -10"), callback = function()
-                    self.current_warm = math.max(0, self.current_warm - 10)
+                { text = warm_minus, callback = function()
+                    self.current_warm = math.max(0, self.current_warm - step)
                     set_warm(self.current_warm)
                     refresh_title()
-                    self:_notify(T(_("Warm: %1/255"), self.current_warm))
+                    self:_notify_debounced(T(_("🔥 Warm: %1/255"), self.current_warm))
                 end },
-                { text = _("Warm +10"), callback = function()
-                    self.current_warm = math.min(MAX_VAL, self.current_warm + 10)
+                { text = warm_plus, callback = function()
+                    self.current_warm = math.min(MAX_VAL, self.current_warm + step)
                     set_warm(self.current_warm)
                     refresh_title()
-                    self:_notify(T(_("Warm: %1/255"), self.current_warm))
+                    self:_notify_debounced(T(_("🔥 Warm: %1/255"), self.current_warm))
                 end },
             },
             {
@@ -481,6 +541,10 @@ function BigmeLight:onBigmeShowLightDialog()
                 end },
             },
             {
+                { text = _("⭐ Save preset..."), callback = function()
+                    UIManager:close(dialog)
+                    self:showSavePresetDialog()
+                end },
                 { text = _("Set exact value..."), callback = function()
                     UIManager:close(dialog)
                     self:showExactInputDialog()
@@ -495,13 +559,43 @@ function BigmeLight:onBigmeShowLightDialog()
     return true
 end
 
+function BigmeLight:showSavePresetDialog()
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Save Preset"),
+        input = "",
+        input_hint = _("Preset name"),
+        description = T(_("Saves current values: ❄️ %1 / 🔥 %2"), self.current_cold, self.current_warm),
+        buttons = {
+            {
+                { text = _("Cancel"), callback = function()
+                    UIManager:close(dialog)
+                end },
+                { text = _("Save"), is_enter_default = true, callback = function()
+                    local name = dialog:getInputText()
+                    if name and name ~= "" then
+                        UIManager:close(dialog)
+                        self:savePreset(nil, name, self.current_cold, self.current_warm)
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Enter a name for the preset"),
+                            timeout = 2,
+                        })
+                    end
+                end },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
 function BigmeLight:showExactInputDialog()
     local dialog
     dialog = InputDialog:new{
-        title = _("Set Exact Cold Light (0-255)"),
+        title = _("Set Exact ❄️ Cool Light (0-255)"),
         input = tostring(self.current_cold),
-        input_hint = _("Cold (0-255)"),
-        description = T(_("Current Warm: %1/255"), self.current_warm),
+        input_hint = _("❄️ Cool (0-255)"),
+        description = T(_("Current 🔥 Warm: %1/255"), self.current_warm),
         buttons = {
             {
                 { text = _("Cancel"), callback = function()
@@ -513,7 +607,7 @@ function BigmeLight:showExactInputDialog()
                         self.current_cold = val
                         set_cold(val)
                         UIManager:close(dialog)
-                        self:_notify(T(_("Cold: %1, Warm: %2"), self.current_cold, self.current_warm))
+                        self:_notify(T(_("❄️%1 🔥%2"), self.current_cold, self.current_warm))
                     else
                         UIManager:show(InfoMessage:new{
                             text = _("Enter a number between 0 and 255"),
@@ -552,7 +646,7 @@ function BigmeLight:checkSetup()
     elseif not helper then
         lines[#lines + 1] = _("\nRun Install / update helper to install it.")
     else
-        lines[#lines + 1] = T(_("\nStatus: cold=%1 warm=%2"), self.current_cold, self.current_warm)
+        lines[#lines + 1] = T(_("\nStatus: ❄️%1 🔥%2"), self.current_cold, self.current_warm)
     end
 
     UIManager:show(InfoMessage:new{
@@ -590,7 +684,7 @@ function BigmeLight:installOrUpdateHelper()
         self._initialized = true
         UIManager:show(InfoMessage:new{
             title = _("Bigme Light setup"),
-            text = T(_("Helper installed to:\n%1\nDirect I/O: %2\nStatus: cold=%3 warm=%4"),
+            text = T(_("Helper installed to:\n%1\nDirect I/O: %2\nStatus: ❄️%3 🔥%4"),
                 HELPER_PATH, direct_io_ok and _("ACTIVE") or _("FALLBACK"), self.current_cold, self.current_warm),
         })
     else
@@ -603,6 +697,65 @@ end
 
 -- --- Menu ---
 
+-- Build the dynamic "Quick presets" submenu from self.presets
+function BigmeLight:buildPresetMenuItems()
+    local items = {}
+    for i, p in ipairs(self.presets) do
+        local idx = i  -- capture for callbacks
+        table.insert(items, {
+            text = T(_("%1  (❄️ %2 / 🔥 %3)"), p.name, p.cold, p.warm),
+            keep_menu_open = true,
+            callback = function() self:applyPresetAt(idx) end,
+            hold_callback = function()
+                self:showEditPresetDialog(idx)
+            end,
+        })
+    end
+    table.insert(items, {
+        text = _("＋ Add preset..."),
+        keep_menu_open = true,
+        callback = function() self:showSavePresetDialog() end,
+    })
+    return items
+end
+
+function BigmeLight:showEditPresetDialog(idx)
+    local p = self.presets[idx]
+    if not p then return end
+    local dialog
+    dialog = InputDialog:new{
+        title = T(_("Edit preset: %1"), p.name),
+        input = p.name,
+        input_hint = _("Preset name"),
+        description = T(_("Values: ❄️ %1 / 🔥 %2"), p.cold, p.warm),
+        buttons = {
+            {
+                { text = _("Delete"), callback = function()
+                    UIManager:close(dialog)
+                    self:deletePreset(idx)
+                end },
+                { text = _("Apply values"), callback = function()
+                    UIManager:close(dialog)
+                    self:applyPresetAt(idx)
+                end },
+                { text = _("Save"), is_enter_default = true, callback = function()
+                    local name = dialog:getInputText()
+                    if name and name ~= "" then
+                        UIManager:close(dialog)
+                        self:savePreset(idx, name, p.cold, p.warm)
+                    else
+                        UIManager:show(InfoMessage:new{
+                            text = _("Enter a name for the preset"),
+                            timeout = 2,
+                        })
+                    end
+                end },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
 function BigmeLight:addToMainMenu(menu_items)
     menu_items.bigmelight = {
         text = _("Bigme Light"),
@@ -614,24 +767,9 @@ function BigmeLight:addToMainMenu(menu_items)
             },
             {
                 text = _("Quick presets"),
-                sub_item_table = {
-                    {
-                        text = _("☀️ Daytime (cold 80, warm 0)"),
-                        callback = function() self:onBigmePresetDay() end,
-                    },
-                    {
-                        text = _("📖 Reading (cold 50, warm 60)"),
-                        callback = function() self:onBigmePresetRead() end,
-                    },
-                    {
-                        text = _("🌙 Bedtime (cold 0, warm 50)"),
-                        callback = function() self:onBigmePresetNight() end,
-                    },
-                    {
-                        text = _("🌑 All off"),
-                        callback = function() self:onBigmeLightOff() end,
-                    },
-                },
+                sub_item_table_func = function()
+                    return self:buildPresetMenuItems()
+                end,
             },
             {
                 text = T(_("Step size: %1"), self.gesture_step),
@@ -667,10 +805,6 @@ function BigmeLight:addToMainMenu(menu_items)
                 end,
             },
             {
-                text = _("All off"),
-                callback = function() self:onBigmeLightOff() end,
-            },
-            {
                 text = _("EinkCenter panel"),
                 callback = function() self:onBigmeEinkCenter() end,
             },
@@ -689,7 +823,7 @@ function BigmeLight:addToMainMenu(menu_items)
                 text_func = function()
                     if self._initialized then
                         local mode = direct_io_ok and _("Direct") or _("Root")
-                        return T(_("Status: C=%1 W=%2 (%3)"), self.current_cold, self.current_warm, mode)
+                        return T(_("Status: ❄️%1 🔥%2 (%3)"), self.current_cold, self.current_warm, mode)
                     else
                         return _("Status: initializing...")
                     end
@@ -702,7 +836,7 @@ function BigmeLight:addToMainMenu(menu_items)
                     if self:_ensureReady() then
                         self.current_cold = read_val("cold") or 0
                         self.current_warm = read_val("warm") or 0
-                        Notification:notify(T(_("Cold: %1, Warm: %2"), self.current_cold, self.current_warm))
+                        Notification:notify(T(_("❄️%1 🔥%2"), self.current_cold, self.current_warm))
                     end
                 end,
             },
@@ -712,6 +846,20 @@ end
 
 function BigmeLight:_notify(text)
     Notification:notify(text)
+end
+
+-- Coalesce rapid gesture notifications into a single update (fewer e-ink refreshes).
+function BigmeLight:_notify_debounced(text)
+    self._pending_notify = text
+    if self._notify_scheduled then return end
+    self._notify_scheduled = true
+    UIManager:scheduleIn(0.35, function()
+        self._notify_scheduled = false
+        if self._pending_notify then
+            Notification:notify(self._pending_notify)
+            self._pending_notify = nil
+        end
+    end)
 end
 
 function BigmeLight:onFlushSettings()
