@@ -217,14 +217,14 @@ function BigmeLight:_postInit()
     self.root_ok = has_root()
     if not self.root_ok then
         logger.warn("BigmeLight: root not available")
-        Notification:notify(_("Bigme Light: root required (grant Magisk superuser)"))
+        self:_notify(_("Bigme Light: root required (grant Magisk superuser)"))
         return
     end
 
     self.driver_ok = driver_present()
     if not self.driver_ok then
         logger.warn("BigmeLight: LM3630A driver not found")
-        Notification:notify(_("Bigme Light: LM3630A light driver not found"))
+        self:_notify(_("Bigme Light: LM3630A light driver not found"))
         return
     end
 
@@ -232,10 +232,10 @@ function BigmeLight:_postInit()
     if not self.helper_ok then
         self.helper_ok = install_helper()
         if self.helper_ok then
-            Notification:notify(_("Bigme Light: helper installed"))
+            self:_notify(_("Bigme Light: helper installed"))
         else
             logger.warn("BigmeLight: helper install failed")
-            Notification:notify(_("Bigme Light: helper install failed"))
+            self:_notify(_("Bigme Light: helper install failed"))
             return
         end
     end
@@ -248,19 +248,49 @@ function BigmeLight:_postInit()
     self.current_warm = read_val("warm") or 0
     self._initialized = true
     logger.dbg("BigmeLight: ready, cold=", self.current_cold, "warm=", self.current_warm, "direct_io=", direct_io_ok)
+
+    -- Hook KOReader Device.powerd so built-in swipe gestures and frontlight menu sliders control LM3630A directly
+    local Device = require("device")
+    if Device and Device.powerd then
+        local powerd = Device.powerd
+        Device.hasNaturalLight = function() return true end
+
+        powerd.frontlightIntensityHW = function(_)
+            return math.floor((self.current_cold / MAX_VAL) * 100)
+        end
+        powerd.setIntensityHW = function(_, intensity)
+            local cold_val = math.floor((intensity / 100) * MAX_VAL)
+            self.current_cold = cold_val
+            set_cold(cold_val)
+        end
+        powerd.frontlightWarmthHW = function(_)
+            return math.floor((self.current_warm / MAX_VAL) * 100)
+        end
+        powerd.setWarmthHW = function(_, warmth)
+            local warm_val = math.floor((warmth / 100) * MAX_VAL)
+            self.current_warm = warm_val
+            set_warm(warm_val)
+        end
+        powerd.turnOffFrontlightHW = function(_)
+            set_both(0, 0)
+        end
+        powerd.turnOnFrontlightHW = function(_)
+            set_both(self.current_cold, self.current_warm)
+        end
+    end
 end
 
 function BigmeLight:_ensureReady()
     if not self.root_ok then
-        Notification:notify(_("Bigme Light: root required (grant Magisk superuser)"))
+        self:_notify(_("Bigme Light: root required (grant Magisk superuser)"))
         return false
     end
     if not self.driver_ok then
-        Notification:notify(_("Bigme Light: LM3630A light driver not found"))
+        self:_notify(_("Bigme Light: LM3630A light driver not found"))
         return false
     end
     if not self._initialized then
-        Notification:notify(_("Bigme Light: still initializing..."))
+        self:_notify(_("Bigme Light: still initializing..."))
         return false
     end
     return true
@@ -344,7 +374,8 @@ function BigmeLight:onBigmeColdUp(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_cold = math.min(MAX_VAL, self.current_cold + step)
     set_cold(self.current_cold)
-    self:_notify_debounced(T(_("❄️ Cool: %1/255"), self.current_cold))
+    local pct = math.floor((self.current_cold / MAX_VAL) * 100 + 0.5)
+    self:_notify_debounced(T(_("❄️ Cool: %1/255 (%2%)"), self.current_cold, pct))
     return true
 end
 
@@ -355,7 +386,8 @@ function BigmeLight:onBigmeColdDown(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_cold = math.max(0, self.current_cold - step)
     set_cold(self.current_cold)
-    self:_notify_debounced(T(_("❄️ Cool: %1/255"), self.current_cold))
+    local pct = math.floor((self.current_cold / MAX_VAL) * 100 + 0.5)
+    self:_notify_debounced(T(_("❄️ Cool: %1/255 (%2%)"), self.current_cold, pct))
     return true
 end
 
@@ -366,7 +398,8 @@ function BigmeLight:onBigmeWarmUp(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_warm = math.min(MAX_VAL, self.current_warm + step)
     set_warm(self.current_warm)
-    self:_notify_debounced(T(_("🔥 Warm: %1/255"), self.current_warm))
+    local pct = math.floor((self.current_warm / MAX_VAL) * 100 + 0.5)
+    self:_notify_debounced(T(_("🔥 Warm: %1/255 (%2%)"), self.current_warm, pct))
     return true
 end
 
@@ -377,7 +410,8 @@ function BigmeLight:onBigmeWarmDown(arg)
     elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
     self.current_warm = math.max(0, self.current_warm - step)
     set_warm(self.current_warm)
-    self:_notify_debounced(T(_("🔥 Warm: %1/255"), self.current_warm))
+    local pct = math.floor((self.current_warm / MAX_VAL) * 100 + 0.5)
+    self:_notify_debounced(T(_("🔥 Warm: %1/255 (%2%)"), self.current_warm, pct))
     return true
 end
 
@@ -486,107 +520,137 @@ function BigmeLight:onBigmeShowLightDialog()
     self.current_warm = read_val("warm") or self.current_warm
 
     local dialog
-    local COOL = _("❄️")  -- cool/cold channel symbol
-    local WARM = _("🔥")  -- warm/hot channel symbol
+    local function get_title()
+        local c_pct = math.floor((self.current_cold / MAX_VAL) * 100 + 0.5)
+        local w_pct = math.floor((self.current_warm / MAX_VAL) * 100 + 0.5)
+        return T(_("❄️ Cool: %1/255 (%2%)  |  🔥 Warm: %3/255 (%4%)"),
+            self.current_cold, c_pct, self.current_warm, w_pct)
+    end
+
     local function refresh_title()
-        if dialog and dialog.title_widget then
-            dialog.title_widget:setText(T(_("%1 Cold: %2/255 | %3 Warm: %4/255"), COOL, self.current_cold, WARM, self.current_warm))
+        if dialog and dialog.setTitle then
+            dialog:setTitle(get_title())
         end
     end
 
     local step = self.gesture_step
-    local cool_minus, cool_plus = T(_("❄️ Cool -%1"), step), T(_("❄️ Cool +%1"), step)
-    local warm_minus, warm_plus = T(_("🔥 Warm -%1"), step), T(_("🔥 Warm +%1"), step)
     dialog = ButtonDialog:new{
-        title = T(_("%1 Cold: %2/255 | %3 Warm: %4/255"), COOL, self.current_cold, WARM, self.current_warm),
+        title = get_title(),
         buttons = {
+            -- Row 1: Cool Coarse Steps
             {
-                { text = cool_minus, callback = function()
+                { text = T(_("❄️ Cool -%1"), step), callback = function()
                     self.current_cold = math.max(0, self.current_cold - step)
                     set_cold(self.current_cold)
                     refresh_title()
-                    self:_notify_debounced(T(_("❄️ Cool: %1/255"), self.current_cold))
+                    local pct = math.floor((self.current_cold / MAX_VAL) * 100 + 0.5)
+                    self:_notify_debounced(T(_("❄️ Cool: %1/255 (%2%)"), self.current_cold, pct))
                 end },
-                { text = cool_plus, callback = function()
+                { text = T(_("❄️ Cool +%1"), step), callback = function()
                     self.current_cold = math.min(MAX_VAL, self.current_cold + step)
                     set_cold(self.current_cold)
                     refresh_title()
-                    self:_notify_debounced(T(_("❄️ Cool: %1/255"), self.current_cold))
-                end },
-                { text = warm_minus, callback = function()
-                    self.current_warm = math.max(0, self.current_warm - step)
-                    set_warm(self.current_warm)
-                    refresh_title()
-                    self:_notify_debounced(T(_("🔥 Warm: %1/255"), self.current_warm))
-                end },
-                { text = warm_plus, callback = function()
-                    self.current_warm = math.min(MAX_VAL, self.current_warm + step)
-                    set_warm(self.current_warm)
-                    refresh_title()
-                    self:_notify_debounced(T(_("🔥 Warm: %1/255"), self.current_warm))
+                    local pct = math.floor((self.current_cold / MAX_VAL) * 100 + 0.5)
+                    self:_notify_debounced(T(_("❄️ Cool: %1/255 (%2%)"), self.current_cold, pct))
                 end },
             },
+            -- Row 2: Cool Fine Steps
             {
-                { text = _("Cold -2"), callback = function()
+                { text = _("❄️ Cool -2 (Fine)"), callback = function()
                     self.current_cold = math.max(0, self.current_cold - 2)
                     set_cold(self.current_cold)
                     refresh_title()
-                    self:_notify(T(_("Cold: %1/255"), self.current_cold))
+                    local pct = math.floor((self.current_cold / MAX_VAL) * 100 + 0.5)
+                    self:_notify_debounced(T(_("❄️ Cool: %1/255 (%2%)"), self.current_cold, pct))
                 end },
-                { text = _("Cold +2"), callback = function()
+                { text = _("❄️ Cool +2 (Fine)"), callback = function()
                     self.current_cold = math.min(MAX_VAL, self.current_cold + 2)
                     set_cold(self.current_cold)
                     refresh_title()
-                    self:_notify(T(_("Cold: %1/255"), self.current_cold))
+                    local pct = math.floor((self.current_cold / MAX_VAL) * 100 + 0.5)
+                    self:_notify_debounced(T(_("❄️ Cool: %1/255 (%2%)"), self.current_cold, pct))
                 end },
-                { text = _("Warm -2"), callback = function()
+            },
+            -- Row 3: Warm Coarse Steps
+            {
+                { text = T(_("🔥 Warm -%1"), step), callback = function()
+                    self.current_warm = math.max(0, self.current_warm - step)
+                    set_warm(self.current_warm)
+                    refresh_title()
+                    local pct = math.floor((self.current_warm / MAX_VAL) * 100 + 0.5)
+                    self:_notify_debounced(T(_("🔥 Warm: %1/255 (%2%)"), self.current_warm, pct))
+                end },
+                { text = T(_("🔥 Warm +%1"), step), callback = function()
+                    self.current_warm = math.min(MAX_VAL, self.current_warm + step)
+                    set_warm(self.current_warm)
+                    refresh_title()
+                    local pct = math.floor((self.current_warm / MAX_VAL) * 100 + 0.5)
+                    self:_notify_debounced(T(_("🔥 Warm: %1/255 (%2%)"), self.current_warm, pct))
+                end },
+            },
+            -- Row 4: Warm Fine Steps
+            {
+                { text = _("🔥 Warm -2 (Fine)"), callback = function()
                     self.current_warm = math.max(0, self.current_warm - 2)
                     set_warm(self.current_warm)
                     refresh_title()
-                    self:_notify(T(_("Warm: %1/255"), self.current_warm))
+                    local pct = math.floor((self.current_warm / MAX_VAL) * 100 + 0.5)
+                    self:_notify_debounced(T(_("🔥 Warm: %1/255 (%2%)"), self.current_warm, pct))
                 end },
-                { text = _("Warm +2"), callback = function()
+                { text = _("🔥 Warm +2 (Fine)"), callback = function()
                     self.current_warm = math.min(MAX_VAL, self.current_warm + 2)
                     set_warm(self.current_warm)
                     refresh_title()
-                    self:_notify(T(_("Warm: %1/255"), self.current_warm))
+                    local pct = math.floor((self.current_warm / MAX_VAL) * 100 + 0.5)
+                    self:_notify_debounced(T(_("🔥 Warm: %1/255 (%2%)"), self.current_warm, pct))
                 end },
             },
+            -- Row 5: Presets (Day / Read)
             {
-                { text = _("☀️ Day"), callback = function()
+                { text = _("☀️ Daytime (80 / 0)"), callback = function()
                     self:applyPreset(80, 0, _("Daytime"))
                     refresh_title()
                 end },
-                { text = _("📖 Read"), callback = function()
+                { text = _("📖 Reading (50 / 60)"), callback = function()
                     self:applyPreset(50, 60, _("Reading"))
                     refresh_title()
                 end },
-                { text = _("🌙 Night"), callback = function()
+            },
+            -- Row 6: Presets (Bedtime / Off)
+            {
+                { text = _("🌙 Bedtime (0 / 50)"), callback = function()
                     self:applyPreset(0, 50, _("Bedtime"))
                     refresh_title()
                 end },
-                { text = _("🌑 Off"), callback = function()
+                { text = _("🌑 All Off"), callback = function()
                     self:onBigmeLightOff()
                     refresh_title()
                 end },
             },
+            -- Row 7: Precision Spinners
             {
-                { text = _("⭐ Save preset..."), callback = function()
-                    UIManager:close(dialog)
-                    self:showSavePresetDialog()
-                end },
-                { text = _("Dial Cold..."), callback = function()
+                { text = _("❄️ Dial Cool Spinner..."), callback = function()
                     UIManager:close(dialog)
                     self:showSpinDialog("cold")
                 end },
-                { text = _("Dial Warm..."), callback = function()
+                { text = _("🔥 Dial Warm Spinner..."), callback = function()
                     UIManager:close(dialog)
                     self:showSpinDialog("warm")
                 end },
-                { text = _("Set exact..."), callback = function()
+            },
+            -- Row 8: Exact Set & Save
+            {
+                { text = _("✏️ Set Exact Number..."), callback = function()
                     UIManager:close(dialog)
                     self:showExactSelectionDialog()
                 end },
+                { text = _("⭐ Save Preset..."), callback = function()
+                    UIManager:close(dialog)
+                    self:showSavePresetDialog()
+                end },
+            },
+            -- Row 9: Close
+            {
                 { text = _("Close"), is_enter_default = true, callback = function()
                     UIManager:close(dialog)
                 end },
@@ -892,7 +956,7 @@ function BigmeLight:addToMainMenu(menu_items)
                             self.gesture_step = spin.value
                             self.settings:saveSetting("gesture_step", spin.value)
                             self.settings:flush()
-                            Notification:notify(T(_("Step size set to %1"), spin.value))
+                            self:_notify(T(_("Step size set to %1"), spin.value))
                         end,
                     }
                     UIManager:show(spin)
@@ -939,7 +1003,7 @@ function BigmeLight:addToMainMenu(menu_items)
                     if self:_ensureReady() then
                         self.current_cold = read_val("cold") or 0
                         self.current_warm = read_val("warm") or 0
-                        Notification:notify(T(_("❄️%1 🔥%2"), self.current_cold, self.current_warm))
+                        self:_notify(T(_("❄️%1 🔥%2"), self.current_cold, self.current_warm))
                     end
                 end,
             },
@@ -948,7 +1012,7 @@ function BigmeLight:addToMainMenu(menu_items)
 end
 
 function BigmeLight:_notify(text)
-    Notification:notify(text)
+    Notification:notify(text, Notification.SOURCE_ALWAYS_SHOW, true)
 end
 
 -- Coalesce rapid gesture notifications into a single update (fewer e-ink refreshes).
@@ -956,10 +1020,10 @@ function BigmeLight:_notify_debounced(text)
     self._pending_notify = text
     if self._notify_scheduled then return end
     self._notify_scheduled = true
-    UIManager:scheduleIn(0.35, function()
+    UIManager:scheduleIn(0.1, function()
         self._notify_scheduled = false
         if self._pending_notify then
-            Notification:notify(self._pending_notify)
+            Notification:notify(self._pending_notify, Notification.SOURCE_ALWAYS_SHOW, true)
             self._pending_notify = nil
         end
     end)
