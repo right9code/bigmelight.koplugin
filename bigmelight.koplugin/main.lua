@@ -400,53 +400,63 @@ function BigmeLight:onDispatcherRegisterActions()
          title=_("Bigme: EinkCenter panel"), screen=true})
 end
 
+-- Dynamic gesture distance-to-step scaling
+local function calculate_gesture_step(arg, default_step)
+    if type(arg) == "number" and arg > 0 then
+        return arg
+    elseif type(arg) == "table" then
+        local dist = arg.distance or (type(arg[1]) == "table" and arg[1].distance) or (type(arg[1]) == "number" and arg[1])
+        if dist and type(dist) == "number" and dist > 1 then
+            local Device = require("device")
+            local Screen = Device.screen
+            local screen_dim = Screen and math.min(Screen:getWidth(), Screen:getHeight()) or 720
+            local ratio = math.min(1.0, math.max(0.02, dist / screen_dim))
+            local scaled_delta = math.ceil(MAX_VAL * (ratio ^ 1.3))
+            return math.max(1, math.min(MAX_VAL, scaled_delta))
+        end
+    end
+    return default_step or 10
+end
+
 -- --- Event Handlers ---
 
 function BigmeLight:onBigmeColdUp(arg)
     if not self:_ensureReady() then return true end
-    local step = self.gesture_step
-    if type(arg) == "number" then step = arg
-    elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
+    local step = calculate_gesture_step(arg, self.gesture_step)
     self.current_cold = math.min(MAX_VAL, self.current_cold + step)
     set_cold(self.current_cold)
     local pct = math.floor((self.current_cold / MAX_VAL) * 100 + 0.5)
-    self:_notify_debounced(T(_("❄️ Cool: %1/255 (%2%)"), self.current_cold, pct))
+    self:_notify_debounced(T(_("❄️ Cool: %1/255 (%2%) [Δ%3]"), self.current_cold, pct, step))
     return true
 end
 
 function BigmeLight:onBigmeColdDown(arg)
     if not self:_ensureReady() then return true end
-    local step = self.gesture_step
-    if type(arg) == "number" then step = arg
-    elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
+    local step = calculate_gesture_step(arg, self.gesture_step)
     self.current_cold = math.max(0, self.current_cold - step)
     set_cold(self.current_cold)
     local pct = math.floor((self.current_cold / MAX_VAL) * 100 + 0.5)
-    self:_notify_debounced(T(_("❄️ Cool: %1/255 (%2%)"), self.current_cold, pct))
+    self:_notify_debounced(T(_("❄️ Cool: %1/255 (%2%) [Δ%3]"), self.current_cold, pct, step))
     return true
 end
 
 function BigmeLight:onBigmeWarmUp(arg)
     if not self:_ensureReady() then return true end
-    local step = self.gesture_step
-    if type(arg) == "number" then step = arg
-    elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
+    local step = calculate_gesture_step(arg, self.gesture_step)
     self.current_warm = math.min(MAX_VAL, self.current_warm + step)
     set_warm(self.current_warm)
     local pct = math.floor((self.current_warm / MAX_VAL) * 100 + 0.5)
-    self:_notify_debounced(T(_("🔥 Warm: %1/255 (%2%)"), self.current_warm, pct))
+    self:_notify_debounced(T(_("🔥 Warm: %1/255 (%2%) [Δ%3]"), self.current_warm, pct, step))
     return true
 end
 
 function BigmeLight:onBigmeWarmDown(arg)
     if not self:_ensureReady() then return true end
-    local step = self.gesture_step
-    if type(arg) == "number" then step = arg
-    elseif type(arg) == "table" and type(arg[1]) == "number" then step = arg[1] end
+    local step = calculate_gesture_step(arg, self.gesture_step)
     self.current_warm = math.max(0, self.current_warm - step)
     set_warm(self.current_warm)
     local pct = math.floor((self.current_warm / MAX_VAL) * 100 + 0.5)
-    self:_notify_debounced(T(_("🔥 Warm: %1/255 (%2%)"), self.current_warm, pct))
+    self:_notify_debounced(T(_("🔥 Warm: %1/255 (%2%) [Δ%3]"), self.current_warm, pct, step))
     return true
 end
 
