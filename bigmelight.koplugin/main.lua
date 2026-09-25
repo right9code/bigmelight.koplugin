@@ -201,7 +201,7 @@ local BigmeLight = WidgetContainer:extend{
     current_cold = 0,
     current_warm = 0,
     gesture_step = 10,
-    turn_off_on_suspend = true,
+    turn_off_on_suspend = false,
     _initialized = false,
     _suspended_cold = nil,
     _suspended_warm = nil,
@@ -217,7 +217,7 @@ function BigmeLight:init()
     if suspend_setting ~= nil then
         self.turn_off_on_suspend = suspend_setting
     else
-        self.turn_off_on_suspend = true
+        self.turn_off_on_suspend = false
     end
 
     local sync_setting = self.settings:readSetting("sync_global")
@@ -334,7 +334,6 @@ end
 -- --- Power Management (Sleep / Wake) ---
 
 function BigmeLight:onSuspend()
-    if not self.turn_off_on_suspend then return end
     self._suspended_cold = self.current_cold
     self._suspended_warm = self.current_warm
     if self.settings then
@@ -342,9 +341,13 @@ function BigmeLight:onSuspend()
         self.settings:saveSetting("last_active_warm", self.current_warm)
         self.settings:flush()
     end
-    if (self.current_cold and self.current_cold > 0) or (self.current_warm and self.current_warm > 0) then
-        set_both(0, 0)
-        logger.dbg("BigmeLight: device suspended; turned off LEDs")
+    -- Only force LEDs off if user explicitly enabled turn_off_on_suspend AND global sync is off.
+    -- When global sync is on, lighting is shared across the OS with the launcher and other apps.
+    if self.turn_off_on_suspend and not self.sync_global then
+        if (self.current_cold and self.current_cold > 0) or (self.current_warm and self.current_warm > 0) then
+            set_both(0, 0)
+            logger.dbg("BigmeLight: device suspended; turned off LEDs")
+        end
     end
 end
 
