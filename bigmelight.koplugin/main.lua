@@ -272,6 +272,11 @@ function BigmeLight:onSuspend()
     if not self.turn_off_on_suspend then return end
     self._suspended_cold = self.current_cold
     self._suspended_warm = self.current_warm
+    if self.settings then
+        self.settings:saveSetting("last_active_cold", self.current_cold)
+        self.settings:saveSetting("last_active_warm", self.current_warm)
+        self.settings:flush()
+    end
     if (self.current_cold and self.current_cold > 0) or (self.current_warm and self.current_warm > 0) then
         set_both(0, 0)
         logger.dbg("BigmeLight: device suspended; turned off LEDs")
@@ -280,17 +285,16 @@ end
 
 function BigmeLight:onResume()
     if not self.turn_off_on_suspend then return end
-    if self._suspended_cold ~= nil and self._suspended_warm ~= nil then
-        if self._suspended_cold > 0 or self._suspended_warm > 0 then
-            set_both(self._suspended_cold, self._suspended_warm)
-            self.current_cold = self._suspended_cold
-            self.current_warm = self._suspended_warm
-            logger.dbg("BigmeLight: device resumed; restored cold=", self.current_cold, "warm=", self.current_warm)
-        end
-        -- Clear saved state so a later off-then-suspend can't restore a stale value
-        self._suspended_cold = nil
-        self._suspended_warm = nil
+    local cold = self._suspended_cold or (self.settings and self.settings:readSetting("last_active_cold"))
+    local warm = self._suspended_warm or (self.settings and self.settings:readSetting("last_active_warm"))
+    if cold and warm and (cold > 0 or warm > 0) then
+        set_both(cold, warm)
+        self.current_cold = cold
+        self.current_warm = warm
+        logger.dbg("BigmeLight: device resumed; restored cold=", self.current_cold, "warm=", self.current_warm)
     end
+    self._suspended_cold = nil
+    self._suspended_warm = nil
 end
 
 -- --- Dispatcher Actions ---
@@ -523,6 +527,32 @@ function BigmeLight:onBigmeShowLightDialog()
                 end },
             },
             {
+                { text = _("Cold -2"), callback = function()
+                    self.current_cold = math.max(0, self.current_cold - 2)
+                    set_cold(self.current_cold)
+                    refresh_title()
+                    self:_notify(T(_("Cold: %1/255"), self.current_cold))
+                end },
+                { text = _("Cold +2"), callback = function()
+                    self.current_cold = math.min(MAX_VAL, self.current_cold + 2)
+                    set_cold(self.current_cold)
+                    refresh_title()
+                    self:_notify(T(_("Cold: %1/255"), self.current_cold))
+                end },
+                { text = _("Warm -2"), callback = function()
+                    self.current_warm = math.max(0, self.current_warm - 2)
+                    set_warm(self.current_warm)
+                    refresh_title()
+                    self:_notify(T(_("Warm: %1/255"), self.current_warm))
+                end },
+                { text = _("Warm +2"), callback = function()
+                    self.current_warm = math.min(MAX_VAL, self.current_warm + 2)
+                    set_warm(self.current_warm)
+                    refresh_title()
+                    self:_notify(T(_("Warm: %1/255"), self.current_warm))
+                end },
+            },
+            {
                 { text = _("☀️ Day"), callback = function()
                     self:applyPreset(80, 0, _("Daytime"))
                     refresh_title()
@@ -545,9 +575,17 @@ function BigmeLight:onBigmeShowLightDialog()
                     UIManager:close(dialog)
                     self:showSavePresetDialog()
                 end },
-                { text = _("Set exact value..."), callback = function()
+                { text = _("Dial Cold..."), callback = function()
                     UIManager:close(dialog)
-                    self:showExactInputDialog()
+                    self:showSpinDialog("cold")
+                end },
+                { text = _("Dial Warm..."), callback = function()
+                    UIManager:close(dialog)
+                    self:showSpinDialog("warm")
+                end },
+                { text = _("Set exact..."), callback = function()
+                    UIManager:close(dialog)
+                    self:showExactSelectionDialog()
                 end },
                 { text = _("Close"), is_enter_default = true, callback = function()
                     UIManager:close(dialog)
@@ -589,13 +627,73 @@ function BigmeLight:showSavePresetDialog()
     UIManager:show(dialog)
 end
 
-function BigmeLight:showExactInputDialog()
+function BigmeLight:showSpinDialog(channel)
+    local is_cold = (channel == "cold")
+    local cur_val = is_cold and self.current_cold or self.current_warm
+    local title = is_cold and _("❄️ Cool Light Dial (White)") or _("🔥 Warm Light Dial (Amber)")
+    local info = is_cold and _("Adjust White LED channel level (0-255)") or _("Adjust Warm LED channel level (0-255)")
+
+    local spin = SpinWidget:new{
+        title_text = title,
+        info_text = info,
+        value = cur_val,
+        value_min = 0,
+        value_max = MAX_VAL,
+        value_step = 1,
+        value_hold_step = 5,
+        ok_text = _("Set"),
+        default_value = cur_val,
+        callback = function(spin)
+            if is_cold then
+                self.current_cold = spin.value
+                set_cold(spin.value)
+            else
+                self.current_warm = spin.value
+                set_warm(spin.value)
+            end
+            self:_notify_debounced(T(_("❄️%1 🔥%2"), self.current_cold, self.current_warm))
+        end,
+    }
+    UIManager:show(spin)
+end
+
+function BigmeLight:showExactSelectionDialog()
+    local select_dialog
+    select_dialog = ButtonDialog:new{
+        title = _("Set Exact Channel Value"),
+        buttons = {
+            {
+                { text = T(_("❄️ Cool (Current: %1)"), self.current_cold), callback = function()
+                    UIManager:close(select_dialog)
+                    self:showExactInputDialog("cold")
+                end },
+                { text = T(_("🔥 Warm (Current: %1)"), self.current_warm), callback = function()
+                    UIManager:close(select_dialog)
+                    self:showExactInputDialog("warm")
+                end },
+            },
+            {
+                { text = _("Cancel"), is_enter_default = true, callback = function()
+                    UIManager:close(select_dialog)
+                end },
+            }
+        }
+    }
+    UIManager:show(select_dialog)
+end
+
+function BigmeLight:showExactInputDialog(channel)
+    local is_cold = (channel == "cold")
+    local cur_val = is_cold and self.current_cold or self.current_warm
+    local title = is_cold and _("Set Exact ❄️ Cool Light (0-255)") or _("Set Exact 🔥 Warm Light (0-255)")
+    local hint = is_cold and _("❄️ Cool (0-255)") or _("🔥 Warm (0-255)")
+
     local dialog
     dialog = InputDialog:new{
-        title = _("Set Exact ❄️ Cool Light (0-255)"),
-        input = tostring(self.current_cold),
-        input_hint = _("❄️ Cool (0-255)"),
-        description = T(_("Current 🔥 Warm: %1/255"), self.current_warm),
+        title = title,
+        input = tostring(cur_val),
+        input_hint = hint,
+        description = is_cold and T(_("Current 🔥 Warm: %1/255"), self.current_warm) or T(_("Current ❄️ Cool: %1/255"), self.current_cold),
         buttons = {
             {
                 { text = _("Cancel"), callback = function()
@@ -604,8 +702,13 @@ function BigmeLight:showExactInputDialog()
                 { text = _("Set"), is_enter_default = true, callback = function()
                     local val = tonumber(dialog:getInputText())
                     if val and val >= 0 and val <= MAX_VAL then
-                        self.current_cold = val
-                        set_cold(val)
+                        if is_cold then
+                            self.current_cold = val
+                            set_cold(val)
+                        else
+                            self.current_warm = val
+                            set_warm(val)
+                        end
                         UIManager:close(dialog)
                         self:_notify(T(_("❄️%1 🔥%2"), self.current_cold, self.current_warm))
                     else
