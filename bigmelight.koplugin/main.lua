@@ -56,6 +56,30 @@ local HELPER_B64 = "IyEvc3lzdGVtL2Jpbi9zaAojIEJpZ21lIEhpQnJlYWsgLyBCNiBmcm9udC1s
 
 -- Direct sysfs I/O flag
 local direct_io_ok = false
+local sync_global_system = true
+
+local _sync_scheduled = false
+local _sync_cold = nil
+local _sync_warm = nil
+
+local function schedule_global_sync(c, w)
+    if not sync_global_system then return end
+    if c ~= nil then _sync_cold = c end
+    if w ~= nil then _sync_warm = w end
+    if _sync_scheduled then return end
+    _sync_scheduled = true
+    UIManager:scheduleIn(0.2, function()
+        _sync_scheduled = false
+        if _sync_cold ~= nil and _sync_warm ~= nil then
+            local sc, sw = _sync_cold, _sync_warm
+            local sync_cmd = string.format(
+                "settings put system ColdValue %d 2>/dev/null; settings put system LastColdLight %d 2>/dev/null; settings put system screen_brightness_cold %d 2>/dev/null; settings put system WarmValue %d 2>/dev/null; settings put system LastWarmLight %d 2>/dev/null; settings put system screen_brightness_warm %d 2>/dev/null",
+                sc, sc, sc, sw, sw, sw
+            )
+            os.execute(string.format("su -c '%s' >/dev/null 2>&1 &", sync_cmd))
+        end
+    end)
+end
 
 local function try_direct_write(path, val)
     local f = io.open(path, "w")
@@ -132,6 +156,7 @@ end
 
 -- Write to driver (prefers direct I/O for zero latency, falls back to su)
 local function set_cold(v)
+    schedule_global_sync(v, nil)
     if direct_io_ok and try_direct_write(COLD_NODE, v) then
         return
     end
@@ -139,6 +164,7 @@ local function set_cold(v)
 end
 
 local function set_warm(v)
+    schedule_global_sync(nil, v)
     if direct_io_ok and try_direct_write(WARM_NODE, v) then
         return
     end
@@ -146,6 +172,7 @@ local function set_warm(v)
 end
 
 local function set_both(c, w)
+    schedule_global_sync(c, w)
     if direct_io_ok and try_direct_write(COLD_NODE, c) and try_direct_write(WARM_NODE, w) then
         return
     end
@@ -192,6 +219,14 @@ function BigmeLight:init()
     else
         self.turn_off_on_suspend = true
     end
+
+    local sync_setting = self.settings:readSetting("sync_global")
+    if sync_setting ~= nil then
+        self.sync_global = sync_setting
+    else
+        self.sync_global = true
+    end
+    sync_global_system = self.sync_global
 
     -- User presets; seeded with the built-ins on first run
     self.presets = self.settings:readSetting("presets")
@@ -969,6 +1004,22 @@ function BigmeLight:addToMainMenu(menu_items)
                     self.turn_off_on_suspend = not self.turn_off_on_suspend
                     self.settings:saveSetting("turn_off_on_suspend", self.turn_off_on_suspend)
                     self.settings:flush()
+                end,
+            },
+            {
+                text = _("Sync globally with Android (EinkCenter & OS)"),
+                checked_func = function() return self.sync_global end,
+                callback = function()
+                    self.sync_global = not self.sync_global
+                    sync_global_system = self.sync_global
+                    self.settings:saveSetting("sync_global", self.sync_global)
+                    self.settings:flush()
+                    if self.sync_global then
+                        schedule_global_sync(self.current_cold, self.current_warm)
+                        self:_notify(_("Global sync enabled (OS & EinkCenter synced)"))
+                    else
+                        self:_notify(_("Global sync disabled"))
+                    end
                 end,
             },
             {
